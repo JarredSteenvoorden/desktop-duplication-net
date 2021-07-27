@@ -15,7 +15,7 @@ namespace DesktopDuplication
         /// <summary>
         /// Gets the bitmap representing the last retrieved desktop frame. This image spans the entire bounds of the specified monitor.
         /// </summary>
-        public Bitmap DesktopImage { get; internal set; }
+        public DirectBitmap DesktopImage { get; internal set; }
 
         /// <summary>
         /// Gets a list of the rectangles of pixels in the desktop image that the operating system moved to another location within the same image.

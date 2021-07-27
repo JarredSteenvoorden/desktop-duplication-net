@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Drawing.Imaging;
-using System.IO;
 
 using SharpDX;
 using SharpDX.Direct3D11;
@@ -11,6 +10,8 @@ using Rectangle = SharpDX.Rectangle;
 using System.Drawing;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using SharpDX.Mathematics.Interop;
+using System.Linq;
 
 namespace DesktopDuplication
 {
@@ -28,9 +29,9 @@ namespace DesktopDuplication
         private OutputDuplicateFrameInformation frameInfo = new OutputDuplicateFrameInformation();
         private int mWhichOutputDevice = -1;
 
-        private Bitmap finalImage1, finalImage2;
+        private DirectBitmap finalImage1, finalImage2;
         private bool isFinalImage1 = false;
-        private Bitmap FinalImage
+        private DirectBitmap FinalImage
         {
             get
             {
@@ -86,15 +87,19 @@ namespace DesktopDuplication
             {
                 throw new DesktopDuplicationException("Could not find the specified output device.");
             }
+
             var output1 = output.QueryInterface<Output1>();
+            
             this.mOutputDesc = output.Description;
+            var desktopRect = (Rectangle)mOutputDesc.DesktopBounds;
+
             this.mTextureDesc = new Texture2DDescription()
             {
                 CpuAccessFlags = CpuAccessFlags.Read,
                 BindFlags = BindFlags.None,
                 Format = Format.B8G8R8A8_UNorm,
-                Width = this.mOutputDesc.DesktopBounds.Width,
-                Height = this.mOutputDesc.DesktopBounds.Height,
+                Width = desktopRect.Width,
+                Height = desktopRect.Height,
                 OptionFlags = ResourceOptionFlags.None,
                 MipLevels = 1,
                 ArraySize = 1,
@@ -127,8 +132,8 @@ namespace DesktopDuplication
                 return null;
             try
             {
-                RetrieveFrameMetadata(frame);
-                RetrieveCursorMetadata(frame);
+                //RetrieveFrameMetadata(frame);
+                //RetrieveCursorMetadata(frame);
                 ProcessFrame(frame);
             }
             catch
@@ -184,17 +189,19 @@ namespace DesktopDuplication
                 frame.MovedRegions = new MovedRegion[movedRegionsLength / Marshal.SizeOf(typeof(OutputDuplicateMoveRectangle))];
                 for (int i = 0; i < frame.MovedRegions.Length; i++)
                 {
+                    var destRect = (Rectangle)movedRectangles[i].DestinationRect;
+
                     frame.MovedRegions[i] = new MovedRegion()
                     {
                         Source = new System.Drawing.Point(movedRectangles[i].SourcePoint.X, movedRectangles[i].SourcePoint.Y),
-                        Destination = new System.Drawing.Rectangle(movedRectangles[i].DestinationRect.X, movedRectangles[i].DestinationRect.Y, movedRectangles[i].DestinationRect.Width, movedRectangles[i].DestinationRect.Height)
+                        Destination = new System.Drawing.Rectangle(destRect.X, destRect.Y, destRect.Width, destRect.Height)
                     };
                 }
 
                 // Get dirty regions
                 int dirtyRegionsLength = 0;
                 Rectangle[] dirtyRectangles = new Rectangle[frameInfo.TotalMetadataBufferSize];
-                mDeskDupl.GetFrameDirtyRects(dirtyRectangles.Length, dirtyRectangles, out dirtyRegionsLength);
+                mDeskDupl.GetFrameDirtyRects(dirtyRectangles.Length, dirtyRectangles.Cast<RawRectangle>().ToArray(), out dirtyRegionsLength);
                 frame.UpdatedRegions = new System.Drawing.Rectangle[dirtyRegionsLength / Marshal.SizeOf(typeof(Rectangle))];
                 for (int i = 0; i < frame.UpdatedRegions.Length; i++)
                 {
@@ -275,16 +282,18 @@ namespace DesktopDuplication
             // Get the desktop capture texture
             var mapSource = mDevice.ImmediateContext.MapSubresource(desktopImageTexture, 0, MapMode.Read, MapFlags.None);
 
-            FinalImage = new System.Drawing.Bitmap(mOutputDesc.DesktopBounds.Width, mOutputDesc.DesktopBounds.Height, PixelFormat.Format32bppRgb);
-            var boundsRect = new System.Drawing.Rectangle(0, 0, mOutputDesc.DesktopBounds.Width, mOutputDesc.DesktopBounds.Height);
+            var desktopRect = (Rectangle)mOutputDesc.DesktopBounds;
+
+            FinalImage = new DirectBitmap(desktopRect.Width, desktopRect.Height);
+            var boundsRect = new System.Drawing.Rectangle(0, 0, desktopRect.Width, desktopRect.Height);
             // Copy pixels from screen capture Texture to GDI bitmap
-            var mapDest = FinalImage.LockBits(boundsRect, ImageLockMode.WriteOnly, FinalImage.PixelFormat);
+            var mapDest = FinalImage.Bitmap.LockBits(boundsRect, ImageLockMode.WriteOnly, FinalImage.Bitmap.PixelFormat);
             var sourcePtr = mapSource.DataPointer;
             var destPtr = mapDest.Scan0;
-            for (int y = 0; y < mOutputDesc.DesktopBounds.Height; y++)
+            for (int y = 0; y < desktopRect.Height; y++)
             {
                 // Copy a single line 
-                Utilities.CopyMemory(destPtr, sourcePtr, mOutputDesc.DesktopBounds.Width * 4);
+                Utilities.CopyMemory(destPtr, sourcePtr, desktopRect.Width * 4);
 
                 // Advance pointers
                 sourcePtr = IntPtr.Add(sourcePtr, mapSource.RowPitch);
@@ -292,7 +301,7 @@ namespace DesktopDuplication
             }
 
             // Release source and dest locks
-            FinalImage.UnlockBits(mapDest);
+            FinalImage.Bitmap.UnlockBits(mapDest);
             mDevice.ImmediateContext.UnmapSubresource(desktopImageTexture, 0);
             frame.DesktopImage = FinalImage;
         }
